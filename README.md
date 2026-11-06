@@ -6,19 +6,19 @@ A small web app that replaces the Ops team's shared onboarding spreadsheet. Coor
 
 ## Running it
 
-Requires PHP 8.3+ with the `pdo_sqlite` extension, and Composer. No Node.js needed.
+Requires PHP 8.3+ with the `pdo_sqlite` extension, and Composer. No Node.js or database server needed.
 
 ```bash
-composer setup     # install packages, create .env + app key, create the SQLite DB, migrate and seed
-composer dev       # http://localhost:8000
+composer setup     # install packages, create .env and the app key, create the SQLite database, migrate and seed the demo data
+composer dev       # run the app at http://localhost:8000
+composer test      # run all tests (38)
 ```
 
 Log in as `linh`, `huy` or `mai`, the three coordinators from the example sheet. The password is `password`.
 
-| Command | What it does |
+| Other commands | What it does |
 | --- | --- |
-| `composer test` | Runs all tests (38) |
-| `composer reset-demo` | Wipes and reseeds the local database |
+| `composer reset-demo` | Wipes the local database and seeds the demo data again |
 | `vendor/bin/pint` | Formats the code (Laravel's style) |
 
 The seed data is the example spreadsheet from the brief (Companies A–F) plus two extra vendors. Timestamps are relative to "now", so whenever you seed, each vendor has been in its stage as long as in the sheet read on 10 Aug 2026.
@@ -30,8 +30,8 @@ Other settings in `.env`:
 - `SESSION_LIFETIME`: default 720 minutes.
 - `DB_CONNECTION`: `sqlite` by default; `mysql` and `mariadb` also work.
 
-> If `php -v` shows a version older than 8.3, call a newer PHP explicitly, e.g. with Laragon:
-> `C:\laragon\bin\php\php-8.5.12-Win32-vs17-x64\php.exe C:\laragon\bin\composer\composer.phar setup`
+> If `php -v` shows a version older than 8.3, run each command with a newer PHP explicitly. For example, with Laragon:
+> `C:\laragon\bin\php\php-8.5.12-Win32-vs17-x64\php.exe C:\laragon\bin\composer\composer.phar setup` (then the same with `dev` and `test`)
 
 ---
 
@@ -191,6 +191,24 @@ These were made to stay within the time limit:
    - single sign-on (SSO);
    - stuck-vendor notifications from a scheduled command;
    - browser tests for the main flows.
+
+### 8. How I used AI
+
+I used Claude Code (Anthropic's AI coding agent) as a pair programmer to move fast within the 3-hour timebox. I owned the technical direction, architectural trade-offs, and acceptance criteria, while the AI handled most of the code generation. Nothing counted as done until I verified it against the brief.
+
+- **Analysis and design.** Starting from the brief, I used the AI to brainstorm the problem analysis and converged on three core design decisions to solve the spreadsheet's bottlenecks:
+  - an append-only audit log of stage changes;
+  - optimistic concurrency control for multiple coordinators editing at the same time;
+  - server-side calculation for "stuck" vendor detection.
+
+  I critically reviewed each choice and its trade-offs against the brief's scope before locking in the design.
+- **Stack change.** The initial prototype was in TypeScript (React and Express). After reviewing it, I decided to pivot to PHP/Laravel. Because this is a workflow app centered around data integrity and an audit trail, Laravel's Eloquent ORM, migrations, and built-in testing tools produced a much smaller, more maintainable codebase. I directed Claude Code to carry out the rewrite while preserving the exact same business rules and test scenarios.
+- **Implementation and edge cases.** While the AI generated the application code and UI, I focused on validating the workflow rules and edge cases. In addition to automated tests, I manually verified the riskiest scenarios in a real browser—specifically blocking backward stage transitions without a reason, and handling race conditions when two coordinators update the same vendor simultaneously.
+- **Testing.** I defined the test strategy around the highest business risks and had the AI generate the test implementation:
+  - two coordinators updating the same vendor at once (concurrency conflict);
+  - stage transition history being recorded accurately (who, when, from/to stage);
+  - the "stuck" threshold being computed deterministically under a frozen clock.
+- **Verification checklist.** Before submitting, I audited the test coverage and ran the project through a strict release checklist: verifying that a fresh clone installs, seeds, and passes all tests cleanly by following this README across both PHP 8.3 and 8.5, with no secrets committed.
 
 ---
 
