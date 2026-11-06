@@ -18,18 +18,30 @@ class TrackerPageTest extends DemoDataTestCase
             ->keyBy('name');
     }
 
-    public function test_derives_time_in_stage_and_stuck_status_from_history(): void
+    public function test_derives_the_sheets_last_updated_column_and_stuck_status_from_history(): void
     {
+        // The example spreadsheet from the brief, read on 10 Aug 2026. Nobody types
+        // these dates: they come from each vendor's last stage change.
+        $sheet = [
+            //              stage                   "Last Updated"  days  stuck
+            'Company A' => [Stage::Active,          '2026-07-02',   39,   false], // Active is never stuck
+            'Company B' => [Stage::KycDocsReceived, '2026-07-18',   23,   true],
+            'Company C' => [Stage::ContractSigned,  '2026-07-28',   13,   true],
+            'Company D' => [Stage::KycVerified,     '2026-08-01',   9,    true],
+            'Company E' => [Stage::KycDocsReceived, '2026-07-15',   26,   true],
+            'Company F' => [Stage::ContractSent,    '2026-08-05',   5,    false],
+        ];
+
         $vendors = $this->listAs('linh');
 
-        $c = $vendors['Company C']; // Contract Signed 9 days ago
-        $this->assertSame([Stage::ContractSigned, 9, true], [$c->stage, $c->daysInStage, $c->isStuck]);
-
-        $d = $vendors['Company D']; // KYC Verified 3 days ago
-        $this->assertSame([Stage::KycVerified, 3, false], [$d->stage, $d->daysInStage, $d->isStuck]);
-
-        $a = $vendors['Company A']; // Active 24 days ago
-        $this->assertSame([Stage::Active, false], [$a->stage, $a->isStuck]);
+        foreach ($sheet as $name => $expected) {
+            $v = $vendors[$name];
+            $this->assertSame(
+                $expected,
+                [$v->stage, $v->stageEnteredAt->toDateString(), $v->daysInStage, $v->isStuck],
+                $name,
+            );
+        }
     }
 
     public function test_updates_stuck_status_as_time_passes_with_no_manual_last_updated_field(): void
@@ -46,11 +58,11 @@ class TrackerPageTest extends DemoDataTestCase
         $response = $this->actingAs($this->user('linh'))->get('/')->assertOk();
 
         $this->assertSame(
-            ['Company E', 'Company B', 'Company C', 'Company G', 'Company D', 'Company H', 'Company F', 'Company A'],
+            ['Company E', 'Company B', 'Company C', 'Company D', 'Company G', 'Company F', 'Company H', 'Company A'],
             $response->viewData('vendors')->pluck('name')->all(),
         );
         $response->assertSee('<tr class="stuck"', false);
-        $response->assertSee('Stuck only (4)');
+        $response->assertSee('Stuck only (5)');
     }
 
     public function test_applies_filters_from_the_query_string(): void

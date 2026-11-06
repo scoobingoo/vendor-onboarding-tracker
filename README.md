@@ -1,6 +1,6 @@
 # Vendor Onboarding Tracker
 
-A small web app that replaces the shared onboarding spreadsheet. Coordinators log in, see every vendor and how long it has been in its current stage, move vendors between the five stages, and see the full history of who changed what, when, and why.
+A small web app that replaces the Ops team's shared onboarding spreadsheet. Coordinators log in, see every vendor with its current stage and how long it has been there, and move vendors through the five stages (*Contract Sent → Contract Signed → KYC Docs Received → KYC Verified → Active*). They can also see who changed what, when, and why. Vendors that have been in a stage for more than 7 days are highlighted.
 
 **Stack:** PHP 8.3+ · Laravel 13 · Blade (server-rendered, no JS build step) · SQLite · PHPUnit
 
@@ -13,7 +13,7 @@ composer setup     # install packages, create .env + app key, create the SQLite 
 composer dev       # http://localhost:8000
 ```
 
-Log in as `linh`, `huy` or `mai` with the password `password`. Seed timestamps are relative to "now", so the demo always shows a mix of stuck and healthy vendors.
+Log in as `linh`, `huy` or `mai`, the three coordinators from the example sheet. The password is `password`.
 
 | Command | What it does |
 | --- | --- |
@@ -21,52 +21,98 @@ Log in as `linh`, `huy` or `mai` with the password `password`. Seed timestamps a
 | `composer reset-demo` | Wipes and reseeds the local database |
 | `vendor/bin/pint` | Formats the code (Laravel's style) |
 
-Settings in `.env`: `FIXED_NOW=2026-08-10T09:00:00Z` pins the current time for a demo, `SESSION_LIFETIME` (default 720 minutes), and `DB_CONNECTION` (`sqlite` by default; `mysql`/`mariadb` also work).
+The seed data is the example spreadsheet from the brief (Companies A–F) plus two extra vendors. Timestamps are relative to "now", so whenever you seed, each vendor has been in its stage as long as in the sheet read on 10 Aug 2026.
 
-> If `php -v` shows an older version than 8.3, call a newer PHP explicitly, e.g. with Laragon:
+To see the sheet's exact dates, set `FIXED_NOW=2026-08-10T09:00:00Z` in `.env` and run `composer reset-demo`. This also freezes the clock, so every change you make is recorded at that moment.
+
+Other settings in `.env`:
+
+- `SESSION_LIFETIME`: default 720 minutes.
+- `DB_CONNECTION`: `sqlite` by default; `mysql` and `mariadb` also work.
+
+> If `php -v` shows a version older than 8.3, call a newer PHP explicitly, e.g. with Laragon:
 > `C:\laragon\bin\php\php-8.5.12-Win32-vs17-x64\php.exe C:\laragon\bin\composer\composer.phar setup`
 
 ---
 
-## Problems with the spreadsheet process
+## Status against the brief
 
-1. **"Stuck" is invisible because time-in-stage depends on a hand-typed date.** "Last Updated" is only correct if someone remembers to change it, and nothing compares it to today. In the example, Company E has been at *KYC Docs Received* since 15 July and nothing draws attention to it. A vendor no one is assigned to is even easier to forget.
-2. **No history, so wrong-looking data can't be explained.** Changing a cell overwrites the old value. If a vendor looks like it's in the wrong stage, there is no record of who moved it, from where, or why, only whatever someone thought to type into "Notes". KYC rejections happen in Slack, so the reason a vendor went backwards lives outside the sheet.
-3. **Three people editing at once, with no rules.** Two coordinators can act on the same row at the same time and overwrite each other. Any stage can be typed into any row, so a vendor can jump from *Contract Sent* to *Active* and skip KYC with nothing to stop it.
+All four requirements are done.
 
-## How the app addresses them
-
-| Problem | What the app does |
+| Requirement | How it works |
 | --- | --- |
-| Invisible stuck vendors | Time in stage is **derived** from the timestamp of the vendor's last stage change. No one enters it. Vendors in a non-terminal stage for more than 7 days are highlighted, counted per stage, and sorted to the top. Unassigned vendors are flagged. |
-| No history | Every stage change writes a row to an **append-only** `stage_transitions` log (who, when, from, to, note). Each vendor's panel shows the full timeline. Moving backwards requires a reason, so corrections explain themselves. The model refuses updates and deletes, and database triggers reject UPDATE/DELETE on the log even from raw SQL. |
-| Concurrent edits, no rules | Stage changes use **optimistic concurrency**: the form carries the stage the user saw, and if someone else changed the vendor first, nothing is saved and the user is told who moved it and where. The workflow rules (no skipping forward, a reason required to go back) are enforced on the server. |
+| **1. Login** | Seeded coordinator accounts and a session login. The header shows who is signed in, and every change is recorded under that user. |
+| **2. View vendors** | One table shows each vendor's region, stage, time in stage and coordinator, plus the last change (who made it and its note). A bar above the table counts vendors, and stuck vendors, per stage. |
+| **3. Update a vendor's stage** | Click a vendor, choose the new stage, then click *Update stage*. The app records who made the change, when, the previous stage and the new stage, plus an optional note. The user never types any of these. The vendor's panel shows its full history, newest first. |
+| **4. Identify stuck vendors** | Time in stage is derived from the last stage change. A vendor that has been in any stage except *Active* for more than 7 days is stuck. Its row is highlighted and sorted to the top, and each stage shows its stuck count. The threshold is hardcoded (`StuckPolicy::STUCK_AFTER_DAYS`) and the current time can be pinned (`FIXED_NOW`). |
 
-## Approach
+**Added beyond the four requirements**, because they address the problems below:
 
-Most of the effort went into modelling the workflow and its history correctly. The UI is deliberately plain: one page with a stage summary bar, a filterable table and a detail panel.
+- workflow rules: no skipping forward, and a reason is required to move back;
+- protection against two coordinators overwriting each other;
+- list filters: stage, stuck only, my vendors, and search.
 
-```
-app/Domain/                 Domain logic, no HTTP
-  Stage.php                   the five stages, labels and order (backed enum)
-  Workflow.php                transition rules: check(), allowedTargets()
-  StuckPolicy.php             time-in-stage and stuck calculation
-  ChangeVendorStage.php       the one write: transactional, compare-and-set stage change
-  VendorSummary.php           a vendor plus its derived status at one moment
-  VendorList.php              "needs attention" sort and filtering
-  VendorFilters.php           list filters <-> query string
-app/Models/                 User, Vendor, StageTransition (append-only)
-app/Http/Controllers/       LoginController, VendorController (tracker page), StageTransitionController
-app/Http/Requests/          ChangeStageRequest (input validation)
-database/migrations/        schema, including the append-only triggers
-database/seeders/           demo data with realistic histories
-resources/views/            Blade: login, tracker page, vendor panel, stage badge, local time
-public/css/app.css          plain CSS
-public/js/app.js            small progressive-enhancement script (the app works without it)
-tests/Unit, tests/Feature   domain rules, HTTP flows, audit log integrity
-```
+**Not built**, because the brief puts these out of scope:
 
-### Data model
+- vendor creation and deletion;
+- registration and account management;
+- production-grade authentication;
+- email;
+- the Compliance review and activation systems;
+- notifications and real-time updates;
+- deployment.
+
+**What remains:** nothing from the requirements. Known gaps are listed under [shortcuts](#6-shortcuts-and-trade-offs) and [what I'd improve](#7-what-id-improve-with-more-time).
+
+---
+
+## Write-up
+
+### 1. Problems with the spreadsheet process
+
+I read the example sheet as of 10 Aug 2026, a few days after its last update.
+
+1. **Stuck vendors go unnoticed.**
+   - How long a vendor has been in a stage depends on a hand-typed "Last Updated" date, and nothing compares that date to today.
+   - In the example, four of the five vendors still in progress (B, C, D, E) have been in their stage for more than a week. Company E has been at *KYC Docs Received* for 26 days. Nothing in the sheet points this out.
+   - The date is also unreliable. It is only right if someone remembers to change it, and it may record a note edit rather than a stage change. Company B's 18 July could be when its documents arrived or when the note was added.
+2. **There is no history, so data that looks wrong can't be explained.**
+   - Editing a cell overwrites the old value.
+   - If a vendor seems to be in the wrong stage, nothing records who moved it, from where, when, or why. All you have is whatever someone typed into Notes.
+   - KYC rejections are discussed in Slack, so the reason a vendor is back at *KYC Docs Received* is kept outside the sheet.
+3. **Three coordinators edit the same sheet with no rules.**
+   - Two people can update the same row at the same time, and the last one silently wins.
+   - Any value can be typed into Stage. A vendor can jump from *Contract Sent* to *Active* and skip KYC, and nothing stops it.
+
+### 2. How the app addresses them
+
+**Stuck vendors go unnoticed**
+
+- Time in stage is **derived** from the vendor's last stage change. Nobody types a date.
+- Stuck vendors are highlighted, counted per stage and sorted to the top.
+- Vendors with no coordinator assigned are flagged.
+
+**No history**
+
+- Every stage change is written to an **append-only** log: who, when, from, to, and a note.
+- The log row is written in the same transaction as the change, and each vendor shows its log as a timeline.
+- Moving backwards requires a reason, so corrections explain themselves.
+- The log can't be edited. The model refuses, and database triggers reject UPDATE and DELETE even from raw SQL.
+
+**Concurrent edits with no rules**
+
+- The server enforces the workflow rules.
+- Each update carries the stage the user saw (**optimistic concurrency**). If someone else changed the vendor first, nothing is saved, and the user is told who moved it and to which stage.
+
+### 3. Overall approach
+
+I modelled the workflow and its history first and kept the UI plain.
+
+- **The domain is a few small classes with no HTTP code** (`app/Domain`). They hold the five stages, the transition rules and the stuck calculation. `ChangeVendorStage` is the only code that changes a vendor's stage.
+- **History is the source of truth.** `stage_transitions` holds every change. `vendors.stage` and `vendors.stage_entered_at` are a cache of the latest row. I kept the cache because it makes the list query trivial and gives the concurrency check something to compare against. It is written in the same transaction as the log row, so the two can't diverge.
+- **There is one page, plus sign-in, as the brief allows.** It has the stage summary bar, the vendor table, and a panel with the selected vendor's history and the stage form. The server renders it; a small script only improves it.
+
+The data model:
 
 ```
 users(id, username, display_name, password, remember_token, created_at, updated_at)
@@ -74,70 +120,133 @@ vendors(id, name, region, coordinator_id, stage, stage_entered_at)
 stage_transitions(id, vendor_id, from_stage, to_stage, changed_by, changed_at, note)   -- append-only
 ```
 
-Plus Laravel's own `sessions`, `cache` and `jobs` tables.
+A vendor's first transition has `from_stage = NULL` because Sales added the vendor. `changed_by = NULL` means the change came from outside the app (Sales, or the imported sheet).
 
-`stage_transitions` is the source of truth. `vendors.stage` and `vendors.stage_entered_at` are a cache of the latest transition. They're kept because they make the list query trivial and give the concurrency check something to compare against, and they are written **in the same transaction** as the log row, so the two can't diverge. A vendor's first row has `from_stage = NULL` (Sales created it). `changed_by = NULL` means the change came from outside the app (Sales / imported).
+Where the code lives:
 
-### Routes
+```
+app/Domain/          Stage, Workflow (rules), StuckPolicy, ChangeVendorStage (the write),
+                     VendorSummary / VendorList / VendorFilters (the list and its sort order)
+app/Models/          User, Vendor, StageTransition (append-only)
+app/Http/            LoginController, VendorController (the page), StageTransitionController,
+                     ChangeStageRequest (input validation)
+database/            migrations (including the append-only triggers), seeder (the example sheet)
+resources/views/     Blade: sign-in, tracker page, vendor panel
+public/              css/app.css, js/app.js (progressive enhancement; the app works without it)
+tests/               Unit (domain rules) and Feature (HTTP flows, audit log)
+```
+
+### 4. Important technical decisions
+
+- **Laravel with server-rendered Blade, not an SPA.** For one page this is the simplest option: no build step and no API layer. Filters live in the URL, so a filtered view can be bookmarked or shared.
+- **Append-only history.** A mistake is fixed by adding a new, backward transition, never by editing the past. This is what makes "why does this look wrong?" answerable.
+- **The workflow rules live in one pure class (`Workflow`).** The form uses it to offer only valid moves, and the server uses it to enforce them. A test checks that the form never offers a move the server would reject.
+- **Optimistic concurrency instead of locking.** With three coordinators, conflicts are rare, so detecting them is simpler than locking rows.
+  - The write is a compare-and-set, `UPDATE vendors … WHERE id = ? AND stage = <stage the user saw>`, inside a transaction.
+  - This also catches a change that lands between reading the vendor and writing it.
+- **A stale view and a broken rule get different responses.**
+  - A stale view gets a warning that names who moved the vendor, plus a fresh form, because the user has to look again before deciding.
+  - A broken rule keeps what the user typed and explains the rule.
+- **Stuck status is computed on the server from one clock.** Everyone sees the same result, tests control time precisely with `travelTo()`, and `FIXED_NOW` makes demos repeatable. The threshold compares exact elapsed time (more than 7 × 24 hours), so the result doesn't depend on time zones.
+- **SQLite by default.** It needs no setup and has real transactions and constraints. The append-only triggers are also written for MySQL and MariaDB.
+
+### 5. Assumptions
+
+- **Forward moves go one stage at a time.** Skipping one, e.g. *Contract Signed → KYC Verified*, would hide that a step never happened.
+- **Backward moves to any earlier stage are allowed, with a reason.**
+  - They are for corrections, e.g. a vendor marked verified before Compliance actually approved it (Company B in the seed data).
+  - A normal KYC rejection is **not** a stage change. As the brief says, the vendor simply stays at *KYC Docs Received*.
+- **Stuck means more than 7 days in the current stage**, with the same threshold for every stage.
+  - *Active* is the final stage and is never stuck.
+  - Any stage change, including a backward one, restarts the clock, because the requirement is time in the *current* stage.
+- **Any coordinator can update any vendor**, as with the shared sheet today. Each vendor still has an assigned coordinator, shown in the list and filterable with "My vendors".
+- **Sales adds vendors outside the app**, so a vendor's first *Contract Sent* entry has no app user.
+- **"Today" for the example sheet is 10 Aug 2026**, a few days after its last update. The seed data and tests use this date.
+- Timestamps are stored in UTC and shown in the browser's local time.
+
+### 6. Shortcuts and trade-offs
+
+These were made to stay within the time limit:
+
+- **Minimal auth.** Seeded users and Laravel's session login. Sessions end after 12 hours of inactivity, and login attempts are throttled. This is enough to know who is acting, and nothing more.
+- **No real-time updates.** A page shows the state at the time it was loaded, and there is a Refresh button. The concurrency check keeps the data correct; live updates would only be a convenience.
+- **No pagination.** Filtering and sorting happen in PHP after loading every vendor. That is fine for tens or hundreds of vendors.
+- **Notes exist only on stage changes.** There is no free-form vendor note, so a status like "waiting on re-upload" can't be recorded without moving the vendor.
+- **No browser tests.** I checked the UI by hand:
+  - login and stuck highlighting;
+  - the history panel;
+  - a backward move with a blank reason, which the server rejects;
+  - filters;
+  - a real conflict between two users.
+- **The MySQL and MariaDB triggers are untested.** The test suite runs on SQLite only.
+
+### 7. What I'd improve with more time
+
+1. **Record KYC rejections without a stage change.** Today a rejection leaves no trace, and the stuck timer keeps running from when the documents first arrived. Rejections should be logged, and the team should decide whether one restarts the clock.
+2. **Per-stage thresholds.** Waiting for a signature and waiting on Compliance probably have different normal durations.
+3. **Reassigning vendors, with an audit trail**, and a team-wide activity feed ("what changed today").
+4. **Roles.** Sales creates vendors, Compliance records KYC outcomes, and coordinators do the rest. Laravel policies would fit this.
+5. **At larger scale:**
+   - Postgres, with filtering and pagination done in the database;
+   - single sign-on (SSO);
+   - stuck-vendor notifications from a scheduled command;
+   - browser tests for the main flows.
+
+---
+
+## Tests: what I chose to test and why
+
+There are 38 tests (`composer test`). I focused on the places where a mistake would be costly or easy to make.
+
+**The workflow rules** (`tests/Unit/WorkflowTest.php`)
+
+- Tested exhaustively, because they are the core business logic.
+- Includes a check that every move the form offers (`allowedTargets()`) is one the server accepts (`check()`).
+
+**The stuck rule** (`tests/Unit/StuckPolicyTest.php`)
+
+- Exactly 7 days is *not* stuck; 7 days and 1 ms is.
+- *Active* is never stuck.
+- A timestamp slightly in the future counts as 0 days.
+- This requirement is easy to get off by one, so the boundary is tested precisely.
+
+**Stage changes through HTTP** (`tests/Feature/ChangeStageTest.php`), against a real SQLite database with a controlled clock:
+
+- a change records who made it, when, the previous and new stage, and the trimmed note;
+- moving a stuck vendor resets its clock;
+- a **stale update is refused** and writes nothing, including a change that lands between the read and the write;
+- skipping a stage is rejected and **leaves the history untouched**;
+- a backward move needs a reason that isn't blank;
+- bad input and unknown vendors are rejected;
+- the list filters survive the redirect.
+
+**The tracker page** (`tests/Feature/TrackerPageTest.php`)
+
+- The derived time in stage reproduces the example sheet's "Last Updated" column.
+- Stuck status changes as time passes, without anyone editing anything.
+- Stuck vendors are listed first, and filters work.
+- The history panel shows every change, newest first.
+
+**The audit log** (`tests/Feature/AuditLogTest.php`) rejects UPDATE and DELETE, both through the model and in raw SQL.
+
+**Login** (`tests/Feature/AuthTest.php`)
+
+- Guests are redirected to the login page.
+- Wrong passwords are rejected.
+- Usernames are case-insensitive.
+- Logging out ends the session.
+
+**List order and filters** (`tests/Unit/VendorListTest.php`)
+
+- Stuck vendors come first, longest-waiting on top, and finished vendors come last.
+- Filters combine correctly and are read from the query string.
+
+## Appendix: routes
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/login` | |
-| POST | `/login` | `username`, `password`; throttled to 10 attempts a minute |
+| GET, POST | `/login` | `username`, `password`. Throttled to 10 attempts a minute. |
 | POST | `/logout` | |
-| GET | `/` | The tracker. Filters live in the query string: `stage`, `stuck=1`, `mine=1`, `q` |
-| GET | `/vendors/{vendor}` | The tracker with that vendor's panel open (same filters) |
-| POST | `/vendors/{vendor}/transitions` | `to_stage`, `expected_from_stage`, `note` → redirects back to the panel with a success message, a stale-data warning, or errors |
-
-## Key technical decisions
-
-- **Workflow rules live in one pure class.** `ChangeVendorStage` enforces them. The form uses `Workflow::allowedTargets()` only to offer valid choices, and a test checks that the UI can never offer a move the server would reject.
-- **History is append-only and is the source of truth.** Mistakes are fixed by adding a new (backward) transition, never by editing the past. That is what makes "why does this look wrong?" answerable.
-- **Optimistic concurrency instead of locking.** With 3 coordinators conflicts are rare, so detecting them is cheaper and simpler than locking rows. The write is a compare-and-set (`UPDATE vendors ... WHERE id = ? AND stage = expected_from_stage`) inside a transaction, so it also catches a change that lands between reading the vendor and writing it. On a conflict the user sees what changed and decides again, rather than the second write silently winning.
-- **"Stale" and "not allowed" are handled differently.** A stale view gets a warning naming who moved the vendor, and a fresh form, because the user has to look again before deciding. A rule violation keeps what the user typed and explains the rule.
-- **Stuck status is computed on the server from Laravel's clock.** Every user gets the same answer, tests control time precisely with `travelTo()`, and `FIXED_NOW` makes demos repeatable. The threshold is compared against exact elapsed time (`> 7 × 24h`), not calendar days, so results don't depend on the server's timezone.
-- **Server-rendered Blade, not an SPA.** No build step and no API/token layer to maintain. Filters are in the URL, so a filtered view can be shared or bookmarked. The JavaScript only improves things: local-time display, clickable rows, filters that apply on click, and the "Reason (required)" label for backward moves. The server checks everything again.
-- **SQLite by default.** It needs no setup and gives real transactions and constraints. The append-only triggers are also defined for MySQL/MariaDB.
-
-## Assumptions
-
-- **Forward moves go one stage at a time.** Skipping, e.g. *Contract Signed → KYC Verified*, would hide that a step never happened.
-- **Backward moves to any earlier stage are allowed, but need a reason.** They cover corrections (a mis-click, a vendor marked verified before Compliance actually approved it) and rollbacks. A normal KYC rejection does **not** create a transition: per the brief, the vendor simply stays at *KYC Docs Received*.
-- Any logged-in coordinator can update any vendor, not just their own (they all share the sheet today). Each vendor still has an assigned coordinator, shown in the list and filterable with "My vendors".
-- Vendor creation (by Sales) happens outside the app, so the initial *Contract Sent* entry is recorded with no app user.
-- One stuck threshold, **more than 7 days**, applies to every non-terminal stage. *Active* is terminal and never stuck.
-- Any stage change, including a backward one, resets the time-in-stage clock, because the requirement is time in the *current* stage.
-- Timestamps are stored in UTC and shown in the browser's local time.
-
-## Shortcuts and trade-offs
-
-- **Auth is minimal:** seeded users and Laravel's session guard. Sessions end after 12 hours of inactivity and login attempts are throttled. Enough to know who is acting, nothing more.
-- **No real-time updates.** A page shows the state when it was loaded, and there is a Refresh button. The concurrency check covers correctness. Live updates would only be a convenience.
-- **No pagination.** Filtering and sorting happen in PHP after loading every vendor, which is fine for tens or hundreds of vendors.
-- **No browser E2E tests.** The UI was checked by hand in the browser: login, stuck highlighting, history, a backward move with a blank reason (rejected by the server), filters, and a real conflict between two users.
-- **The append-only triggers are only tested on SQLite.** The MySQL/MariaDB versions are written but not exercised by the test suite.
-- **Notes exist only on stage changes.** There is no free-form, editable vendor note.
-
-## What I chose to test, and why
-
-- **`tests/Unit/WorkflowTest.php`:** the transition rules exhaustively, because they are the core business logic. Includes a consistency check between `allowedTargets()` (what the UI offers) and `check()` (what the server accepts).
-- **`tests/Unit/StuckPolicyTest.php`:** the boundary (exactly 7 days is *not* stuck, 7 days + 1 ms is), *Active* never being stuck, and clock skew. This requirement is easy to get off by one.
-- **`tests/Unit/VendorListTest.php`:** the "needs attention" sort (stuck first, longest-waiting on top, finished last), combined filters, and reading filters from the query string.
-- **`tests/Feature/ChangeStageTest.php`:** through HTTP, against a real in-memory SQLite database and a controlled clock:
-  - a stage change records who, when, from, to and the (trimmed) note;
-  - stuck status resets after a move;
-  - a **stale update is refused** and writes nothing, including a change that lands between the read and the write;
-  - an invalid move is rejected and **leaves history untouched**;
-  - backward moves need a reason;
-  - input validation and 404s, and the list filters survive the redirect.
-- **`tests/Feature/TrackerPageTest.php`:** derived time-in-stage and stuck status, stuck status changing as time passes, list order, query-string filters, and the history panel.
-- **`tests/Feature/AuthTest.php`:** guests are redirected, wrong passwords rejected, usernames are case-insensitive, logout ends the session.
-- **`tests/Feature/AuditLogTest.php`:** the audit log rejects UPDATE/DELETE even through raw SQL, and the model refuses them too.
-
-## What I'd do next
-
-1. **Record KYC rejections as events without a stage change.** Today a rejection keeps the vendor at *KYC Docs Received*, and the stuck timer keeps running from when the docs first arrived (Company B in the seed data). Rejections should be logged, and the team should decide whether one restarts the clock.
-2. **Per-stage thresholds.** Waiting for a signature and waiting on Compliance probably have different normal durations.
-3. **Assignment changes with an audit trail**, plus a team-wide activity feed ("what changed today").
-4. **Roles:** Sales creates vendors, Compliance records KYC outcomes, coordinators do the rest. Today only coordinators exist. Laravel policies would fit here.
-5. **At larger scale:** Postgres, server-side filtering and pagination, real auth (SSO), stuck-vendor notifications (a scheduled command plus Laravel notifications), and browser tests for the main flows.
+| GET | `/` | The tracker. Filters go in the query string: `stage`, `stuck=1`, `mine=1`, `q`. |
+| GET | `/vendors/{vendor}` | The tracker with that vendor's panel open, keeping the filters. |
+| POST | `/vendors/{vendor}/transitions` | Takes `to_stage`, `expected_from_stage` and `note`. Redirects back to the panel with a success message, a stale-data warning, or errors. |

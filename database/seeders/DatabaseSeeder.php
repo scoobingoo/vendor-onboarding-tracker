@@ -10,9 +10,15 @@ use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Demo data. Timestamps are relative to "now", so the demo always shows a mix
- * of stuck and healthy vendors. Each vendor gets a full history, as if the
- * spreadsheet had been migrated with its past changes.
+ * Demo data. Companies A-F are the example spreadsheet from the brief: same
+ * region, stage, coordinator and notes, and each one entered its current stage
+ * on the sheet's "Last Updated" date, read as of 10 Aug 2026 (FIXED_NOW=
+ * 2026-08-10T09:00:00Z shows those exact dates). G and H are extra: a vendor
+ * nobody is assigned to, and a second healthy one.
+ *
+ * Timestamps are relative to "now", so the demo looks the same whenever it is
+ * seeded. Each vendor gets a full history, as if the spreadsheet had been
+ * migrated with its past changes.
  */
 class DatabaseSeeder extends Seeder
 {
@@ -35,11 +41,11 @@ class DatabaseSeeder extends Seeder
             'region' => 'HCMC',
             'coordinator' => 'linh',
             'history' => [
-                [Stage::ContractSent, 40, null],
-                [Stage::ContractSigned, 35, 'linh'],
-                [Stage::KycDocsReceived, 30, 'linh'],
-                [Stage::KycVerified, 26, 'linh', 'Approved by Compliance on Slack.'],
-                [Stage::Active, 24, 'linh'],
+                [Stage::ContractSent, 61, null],
+                [Stage::ContractSigned, 56, 'linh'],
+                [Stage::KycDocsReceived, 50, 'linh'],
+                [Stage::KycVerified, 43, 'linh', 'Approved by Compliance on Slack.'],
+                [Stage::Active, 39, 'linh'], // sheet: 2026-07-02
             ],
         ],
         [
@@ -48,11 +54,11 @@ class DatabaseSeeder extends Seeder
             'region' => 'Can Tho',
             'coordinator' => 'huy',
             'history' => [
-                [Stage::ContractSent, 30, null],
-                [Stage::ContractSigned, 26, 'huy'],
-                [Stage::KycDocsReceived, 22, 'huy'],
-                [Stage::KycVerified, 19, 'mai'],
-                [Stage::KycDocsReceived, 18, 'huy', 'Marked verified by mistake: Compliance rejected the business license (expired). Waiting on re-upload.'],
+                [Stage::ContractSent, 40, null],
+                [Stage::ContractSigned, 35, 'huy'],
+                [Stage::KycDocsReceived, 30, 'huy'],
+                [Stage::KycVerified, 25, 'mai'],
+                [Stage::KycDocsReceived, 23, 'huy', 'Marked verified by mistake: Compliance rejected the business license (expired). Waiting on business license re-upload.'], // sheet: 2026-07-18
             ],
         ],
         [
@@ -60,8 +66,8 @@ class DatabaseSeeder extends Seeder
             'region' => 'Hanoi',
             'coordinator' => 'linh',
             'history' => [
-                [Stage::ContractSent, 12, null],
-                [Stage::ContractSigned, 9, 'linh'],
+                [Stage::ContractSent, 20, null],
+                [Stage::ContractSigned, 13, 'linh'], // sheet: 2026-07-28
             ],
         ],
         [
@@ -69,10 +75,10 @@ class DatabaseSeeder extends Seeder
             'region' => 'HCMC',
             'coordinator' => 'mai',
             'history' => [
-                [Stage::ContractSent, 20, null],
-                [Stage::ContractSigned, 15, 'mai'],
-                [Stage::KycDocsReceived, 10, 'mai'],
-                [Stage::KycVerified, 3, 'mai'],
+                [Stage::ContractSent, 27, null],
+                [Stage::ContractSigned, 22, 'mai'],
+                [Stage::KycDocsReceived, 16, 'mai'],
+                [Stage::KycVerified, 9, 'mai'], // sheet: 2026-08-01
             ],
         ],
         [
@@ -80,9 +86,9 @@ class DatabaseSeeder extends Seeder
             'region' => 'Da Nang',
             'coordinator' => 'huy',
             'history' => [
-                [Stage::ContractSent, 28, null],
-                [Stage::ContractSigned, 25, 'huy'],
-                [Stage::KycDocsReceived, 21, 'huy'],
+                [Stage::ContractSent, 40, null],
+                [Stage::ContractSigned, 33, 'huy'],
+                [Stage::KycDocsReceived, 26, 'huy'], // sheet: 2026-07-15
             ],
         ],
         [
@@ -90,7 +96,7 @@ class DatabaseSeeder extends Seeder
             'region' => 'HCMC',
             'coordinator' => 'mai',
             'history' => [
-                [Stage::ContractSent, 1, null],
+                [Stage::ContractSent, 5, null], // sheet: 2026-08-05
             ],
         ],
         [
